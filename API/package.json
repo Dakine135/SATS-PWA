@@ -1,0 +1,23 @@
+{
+  "name": "SATSTicketPuppet",
+  "version": "1.0.0",
+  "description": "Node server with Puppeteer to automate pulling ticket information.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dakine135/SATS-PWA"
+  },
+  "author": "Dustin Welborn",
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/Dakine135/SATS-PWA/issues"
+  },
+  "homepage": "https://github.com/Dakine135/SATS-PWA#readme",
+  "dependencies": {
+    "moment": "^2.24.0",
+    "puppeteer": "^1.20.0"
+  }
+}

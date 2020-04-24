@@ -1,3 +1,7 @@
+#sensative settings
+env.json
+API/env.json
+
 # Logs
 logs
 *.log
