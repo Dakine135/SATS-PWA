@@ -17,6 +17,7 @@
   },
   "homepage": "https://github.com/Dakine135/SATS-PWA#readme",
   "dependencies": {
+    "express": "^4.17.1",
     "moment": "^2.24.0",
     "puppeteer": "^1.20.0"
   }
