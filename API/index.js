@@ -10,7 +10,7 @@ var app = express();
 //data
 var activitiesDataBase = {};
 var mostRecentActivityId = 0;
-var ticketNotesCache = {};
+// var ticketNotesCache = {};
 
 app.get('/getActivity', async function (req, res) {
 	try {
@@ -63,58 +63,82 @@ app.get('/getActivity', async function (req, res) {
  
 async function updateDataBase(){
 	console.log("Start browser");
-	browser = await puppeteer.launch({headless: false}); //{headless: false, slowMo: 250}
+	browser = await puppeteer.launch({headless: true}); //{headless: false, slowMo: 250}
+	let closeBrowser = true;
 	
 	await connectAndLogin();
 
 	let allActivity = await getActivites();
 
+	let notesToGet = {};
+
+	//pre-processing
+	console.log(`pre-processing ${allActivity.length} activity items`);
+	let alreadyProcessedCount = 0;
  	allActivity.forEach(async(item)=>{
 		// console.log("----Start----");
-		let dateTimeMilliSeconds = new Date (item.dateTimeString).getTime();
-		// console.log("dateTimeMilliSeconds", dateTimeMilliSeconds);
-		item['dateTimeMilliSeconds'] = dateTimeMilliSeconds;
 		if(mostRecentActivityId < item.id) mostRecentActivityId = item.id;
 		if(activitiesDataBase[item.id] == null){
-			// console.log("Item Text:", item.text);
-			// console.log("Item Action:", item.action);
-			if(item.action == 'added'){
-				// console.log("New \'added\' item", dateTimeMilliSeconds);
-				// item.parts.forEach(async (part)=>{
-				// 	if(part.type == 'tickets'){
-				// 		try {
-				// 			let allNotesFromTicket = await getNotesFromTicket(part.ticketNumber);
-				// 			allNotesFromTicket.forEach((note)=>{
-				// 				// console.log(item.dateTimeString, '<==>', note.dateTimeString);
-				// 				if(item.dateTimeString == note.dateTimeString){
-				// 					part.note = note;
-				// 				}
-				// 			});
-				// 			// console.log(part.notes);
-				// 		} catch(error) {
-				// 			console.log("error getting notes from ticket", part.ticketNumber, error);
-				// 		}
-				// 	}
-				// }); //each part of item
-				// console.log(item);
-				// item.parts.forEach((part)=>{
-				// 	if(part.note) console.log(part.note);
-				// });
-				activitiesDataBase[item.id] = item;
-			} //if item is 'added'
-			else { //TODO handle other types of items
+			if(item.action == undefined || item.action == null || item.ticketNumber == "N/A"){
+				console.log("Item Text:", item.text);
+				console.log("Item Action:", item.action);
+			}
+			//console.log(item.ticketNumber);
+			
+			switch(item.action){
+				case 'added a note to Ticket':
+					//If action is a Note addition, add to que to later lookup ticket and get note.
+					//this is to avoid looking up the same ticket multiple times.
+
+					if(notesToGet[item.ticketNumber] == null) notesToGet[item.ticketNumber] = {};
+					notesToGet[item.ticketNumber][item.dateTimeString] = item.id;
+		
+					activitiesDataBase[item.id] = item;
+					break;
+				case 'was added as a technician':
+				case 'closed Ticket':
+				case 'submitted Ticket':
+				case 'suspended Ticket':
+				case 'activated Ticket':
+				case 'closed Ticket':
+					//these do not need additional Processing
+					activitiesDataBase[item.id] = item;
+					break;
+				default:
+					console.log('action type unknown', item.action);
 			}
 			
 		} else {
-			// console.log("Already Processesed this \'added\' item", dateTimeMilliSeconds);
+			//console.log("Already Processesed this activity item", item.id);
+			alreadyProcessedCount++;
 		}
 		 //TODO handle other types like submitted or assigned or closed
 		// console.log("----END----");
- 	}); //each activity item
+	}); //each activity item
+	console.log(`${alreadyProcessedCount} already processed`);
+	
+	//post-processing
+	let ticketsToGet = Object.keys(notesToGet);
+	console.log(`Getting Notes for ${ticketsToGet.length} Tickets`);
+	await Promise.all(ticketsToGet.map(async (ticketNumber) => {
+		try {
+			let allNotesFromTicket = await getNotesFromTicket(ticketNumber);
+			// console.log(allNotesFromTicket);
+			let noteUpdateItem = notesToGet[ticketNumber];
+			allNotesFromTicket.forEach((note)=>{
+				if(noteUpdateItem.hasOwnProperty(note.dateTimeString)){
+					let activityId = noteUpdateItem[note.dateTimeString];
+					activitiesDataBase[activityId]['note'] = note;
+				}
+			});
+		} catch(error) {
+			console.log("error getting notes from ticket", ticketNumber, error);
+		}
+	}));
  	
  	console.log("finished script");
  	
-	await browser.close();
+	if(closeBrowser) await browser.close();
 };
 
 async function connectAndLogin(){
@@ -148,7 +172,7 @@ async function getActivites(){
         everythingInMain.forEach((item)=>{
         	// console.log(item.tagName);
         	if(item.tagName == 'H3'){
-        		// console.log("H3 tag:",item.innerText);
+        		console.log("H3 tag:",item.innerText);
         		date = item.innerText;
         	} else if(item.classList.contains('activity')){
         		let activityJson = {};
@@ -162,27 +186,84 @@ async function getActivites(){
 					activityJson.ticketNumber = "N/A";
 	            	activityJson.iconType = iconType;
 	            	activityJson.text = item.innerText;
-	            	activityJson.action = activityJson.text.split(' ')[3];
-	            	activityJson.dateTimeString = date +' '+ activityJson.text.split(' at ')[1];
+					let actionTest = activityJson.text.split(' ')[3];
+					switch (actionTest) {
+						case "added":
+							actionTest = activityJson.text.split(" ").splice(3,5).join(" ");
+							//activityJson.text.split(' ').splice(3,7).join(" ");
+							
+							if(actionTest != "added a note to Ticket"){
+								console.error("Error collision action type", activityJson.text);
+							} else activityJson.action = actionTest;
+							break;
+						case "was":
+							actionTest = activityJson.text.split(" ").splice(3,5).join(" ");
+							if(actionTest != "was added as a technician"){
+								console.error("Error collision action type", activityJson.text);
+							} else activityJson.action = actionTest;
+							break;
+						case "submitted":
+							actionTest = activityJson.text.split(' ').splice(3,2).join(" ");
+							if(actionTest != "submitted Ticket"){
+								console.error("Error collision action type", activityJson.text);
+							} else activityJson.action = actionTest;
+							break;
+						case "closed":
+							actionTest = activityJson.text.split(' ').splice(3,2).join(" ");
+							if(actionTest != "closed Ticket"){
+								console.error("Error collision action type", activityJson.text);
+							} else activityJson.action = actionTest;
+							break;
+						case "activated":
+							actionTest = activityJson.text.split(' ').splice(3,2).join(" ");
+							if(actionTest != "activated Ticket"){
+								console.error("Error collision action type", activityJson.text);
+							} else activityJson.action = actionTest;
+							break;
+						case "suspended":
+							actionTest = activityJson.text.split(' ').splice(3,2).join(" ");
+							if(actionTest != "suspended Ticket"){
+								console.error("Error collision action type", activityJson.text);
+							} else activityJson.action = actionTest;
+							break;
+						case "uploaded":
+							actionTest = activityJson.text.split(' ').splice(3,1).join(" ");
+							//action text only one word
+							activityJson.action = actionTest;
+							break;
+						default:
+							console.log("unhandled action case", actionTest);
+					} //switch block
+					if (!activityJson.text.includes(' at ')){
+						activityJson.dateTimeString = "N/A";
+						activityJson.dateTimeMilliSeconds = "N/A";
+					} else {
+						activityJson.dateTimeString = date +' '+ activityJson.text.split(' at ')[1];
+						activityJson.dateTimeMilliSeconds = new Date(activityJson.dateTimeString).getTime();
+					}
 	            	let partsElms = item.querySelectorAll('a');
-	            	activityJson.parts = [];
 	            	partsElms.forEach((part)=>{
-	            		let partObj = {};
-	            		partObj.text = part.innerText;
-	            		partObj.link = part.href;
-	            		partObj.type = part.href.split('/')[4];
-	            		if(partObj.type == 'tickets'){
-							 partObj.ticketNumber = part.href.split('/')[5];
-							 activityJson.ticketNumber = partObj.ticketNumber;
+						let partType = part.href.split('/')[4];
+						switch(partType){
+							case 'tickets':
+								activityJson.ticketNumber = part.href.split('/')[5];
+								break;
+							case 'users':
+								activityJson.userId = part.href.split('/')[5];
+								activityJson.userFullName = part.innerText;
+								break;
+							default:
+								console.log('unknown part type');
 						}
-	            		activityJson.parts.push(partObj);
-
 	            	});
 	            }
 	            catch (exception){
 
-	            }
-	            activities.push(activityJson);
+				}
+				//console.log(activityJson);
+				if(activityJson.action != "uploaded"){
+					activities.push(activityJson);
+				}
         	}
         });
         return activities;
@@ -192,8 +273,9 @@ async function getActivites(){
 //open page referenced, get ticket comments
 async function getNotesFromTicket(ticketNumber){
 	let ticketNotes;
-	if(ticketNotesCache[ticketNumber] != null){
-		ticketNotes = ticketNotesCache[ticketNumber];
+	if(false){ //ticketNotesCache[ticketNumber] != null
+		//ticketNotes = ticketNotesCache[ticketNumber];
+		//TODO need to check for timestamp and if there have been new changes on that ticket.
 	} else {
 		// console.log("open new tab for ticket: ", ticketNumber);
 		let tab = await browser.newPage();
@@ -223,10 +305,10 @@ async function getNotesFromTicket(ticketNumber){
 				tempNote.dateTimeString = noteDiv.querySelector('.pull-right').innerText;
 				notes.push(tempNote);
 			});
-			ticketNotesCache[ticketNumber] = notes;
+			//ticketNotesCache[ticketNumber] = notes;
 			return notes;
 		});
-		tab.close();
+		// tab.close();
 	}
 	
 	return ticketNotes;
